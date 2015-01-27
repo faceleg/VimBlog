@@ -30,8 +30,8 @@
 "           http://fzysqr.com/
 "           http://apt-blog.net
 "
-" VimRepress 
-"    - A mod of a mod of a mod of Vimpress.   
+" VimRepress
+"    - A mod of a mod of a mod of Vimpress.
 "    - A vim plugin fot writting your wordpress blog.
 "    - Write with Markdown, control posts format precisely.
 "    - Stores Markdown rawtext in wordpress custom fields.
@@ -81,7 +81,8 @@ command! -nargs=? BlogCode exec('py blog_append_code(<f-args>)')
 python << EOF
 # -*- coding: utf-8 -*-
 import vim
-import urllib
+import os
+import urllib2
 import xmlrpclib
 import re
 import os
@@ -89,6 +90,40 @@ import mimetypes
 import webbrowser
 import tempfile
 from ConfigParser import SafeConfigParser
+
+
+import urllib2
+import xmlrpclib
+
+
+# Proxy support for xmlrpclib
+# https://gist.github.com/nathforge/980961
+class Urllib2Transport(xmlrpclib.Transport):
+    def __init__(self, opener=None, https=False, use_datetime=0):
+        xmlrpclib.Transport.__init__(self, use_datetime)
+        self.opener = opener or urllib2.build_opener()
+        self.https = https
+
+    def request(self, host, handler, request_body, verbose=0):
+        proto = ('http', 'https')[bool(self.https)]
+        req = urllib2.Request('%s://%s%s' % (proto, host, handler), request_body)
+        req.add_header('User-agent', self.user_agent)
+        self.verbose = verbose
+        return self.parse_response(self.opener.open(req))
+
+
+class HTTPProxyTransport(Urllib2Transport):
+    def __init__(self, proxies, use_datetime=0):
+        opener = urllib2.build_opener(urllib2.ProxyHandler(proxies))
+        Urllib2Transport.__init__(self, opener, use_datetime)
+
+def system_proxy():
+  return os.getenv('HTTP_PROXY', os.getenv('http_proxy'))
+
+if system_proxy():
+  proxy = urllib2.ProxyHandler({'http': system_proxy()})
+  opener = urllib2.build_opener(proxy)
+  urllib2.install_opener(opener)
 
 try:
     import markdown
@@ -305,14 +340,20 @@ class DataObject(object):
 
         return self.__config
 
-
 class wp_xmlrpc(object):
 
     def __init__(self, blog_url, username, password):
         self.blog_url = blog_url
         self.username = username
         self.password = password
-        p = xmlrpclib.ServerProxy(os.path.join(blog_url, "xmlrpc.php"))
+        if system_proxy():
+          transport = HTTPProxyTransport({
+            'http': system_proxy()
+          })
+          p = xmlrpclib.ServerProxy(os.path.join(blog_url, "xmlrpc.php"), transport=transport)
+        else:
+          p = xmlrpclib.ServerProxy(os.path.join(blog_url, "xmlrpc.php"))
+
         self.mw_api = p.metaWeblog
         self.wp_api = p.wp
         self.mt_api = p.mt
@@ -949,7 +990,6 @@ def blog_preview(pub = "local"):
     else:
         raise VimPressException("Invalid option: %s " % pub)
 
-
 @exception_check
 def blog_guess_open(what):
     """
@@ -975,7 +1015,7 @@ def blog_guess_open(what):
 
                 # fail,  try get full link from headers
                 if guess_id is None:
-                    headers = urllib.urlopen(what).headers.headers
+                    headers = urllib2.urlopen(what).headers.headers
                     for link in headers:
                         if link.startswith("Link:"):
                             post_id = re.search(r"<\S+?p=(\d+)>", link).group(1)
